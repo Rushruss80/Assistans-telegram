@@ -3,7 +3,7 @@ import os
 import telebot
 from datetime import datetime
 
-BOT_TOKEN = os.getenv("BOT_TOKEN").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN")..strip().replace('–', '-')
 bot = telebot.TeleBot(BOT_TOKEN)
 
 tasks = {}
