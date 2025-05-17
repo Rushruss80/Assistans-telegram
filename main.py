@@ -23,6 +23,6 @@ def handle_task(message):
 
     tasks[user_id].append({"task": text, "time": now, "done": False})
     bot.send_message(user_id, f"Задачу записано: '{text}'")
-Я нагадаю тобі пізніше ")
+"Я нагадаю тобі пізніше ")
 
 bot.polling()
