@@ -1,70 +1,49 @@
-import telebot
-import asyncio
-import re
-from datetime import datetime
 import os
+import telebot
+from datetime import datetime, timedelta
+import threading
+import re
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-if BOT_TOKEN is None:
-    raise ValueError("❌ BOT_TOKEN не заданий в середовищі")
-
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ---- Обробка часу ----
-def parse_time(message: str):
-    moment_pattern = r"(?:о|в)\s?(\d{1,2}:\d{2})"
-    interval_pattern = r"(?:з)\s?(\d{1,2}:\d{2})\s?(?:до)\s?(\d{1,2}:\d{2})"
+задачи = {}
 
-    now = datetime.now()
+@bot.message_handler(commands=['start'])
+def начинать(сообщение):
+    bot.send_message(сообщение.chat.id, "Привіт! Я твій асистент-планувальник. Напиши свою задачу.")
 
-    interval_match = re.search(interval_pattern, message)
-    if interval_match:
-        start_str, end_str = interval_match.groups()
-        start = datetime.strptime(start_str, "%H:%M").replace(
-            year=now.year, month=now.month, day=now.day)
-        end = datetime.strptime(end_str, "%H:%M").replace(
-            year=now.year, month=now.month, day=now.day)
-        return ("interval", start, end)
+@bot.message_handler(func=lambda m: True)
+def обрабатывать_задачу(сообщение):
+    user_id = сообщение.chat.id
+    текст = сообщение.text
+    сейчас = datetime.now()
 
-    moment_match = re.search(moment_pattern, message)
-    if moment_match:
-        time_str = moment_match.group(1)
-        scheduled = datetime.strptime(time_str, "%H:%M").replace(
-            year=now.year, month=now.month, day=now.day)
-        return ("moment", scheduled)
+    if user_id not in задачи:
+        задачи[user_id] = []
 
-    return None
+    задачи[user_id].append({"задача": текст, "время": сейчас, "сделаний": False})
 
-# ---- Запуск нагадування ----
-async def schedule_reminder(chat_id, task_text, scheduled_time):
-    now = datetime.now()
-    delay = (scheduled_time - now).total_seconds()
-    if delay > 0:
-        await asyncio.sleep(delay)
-        bot.send_message(chat_id, f"⏰ Нагадування: {task_text}")
+    # Перевірка чи є час у форматі HH:MM
+    time_match = re.search(r'(\d{1,2}:\d{2})', текст)
+    if time_match:
+        time_str = time_match.group(1)
+        try:
+            task_time = datetime.strptime(time_str, "%H:%M").replace(
+                year=сейчас.year, month=сейчас.month, day=сейчас.day
+            )
+            delta = (task_time - сейчас).total_seconds()
+            if delta > 0:
+                def reminder():
+                    bot.send_message(user_id, f"⏰ Нагадування: {текст}")
+                threading.Timer(delta, reminder).start()
+                bot.send_message(user_id, f"✅ Задача прийнята: {текст} (на {time_str})")
+            else:
+                bot.send_message(user_id, f"❌ Занадто пізно — час уже минув ({time_str})")
+        except Exception as e:
+            bot.send_message(user_id, f"❌ Помилка при обробці часу: {str(e)}")
     else:
-        bot.send_message(chat_id, f"⚠️ Задача {task_text} вже в минулому")
+        bot.send_message(user_id, f"✅ Задача прийнята: {текст}")
+        bot.send_message(user_id, "Я нагадаю тобі пізніше")
 
-# ---- Обробка вхідних повідомлень ----
-@bot.message_handler(func=lambda msg: True)
-def handle_task(message):
-    text = message.text
-    parsed = parse_time(text)
-
-    if parsed:
-        if parsed[0] == "moment":
-            scheduled_time = parsed[1]
-            asyncio.create_task(schedule_reminder(message.chat.id, text, scheduled_time))
-            bot.send_message(message.chat.id, f"✅ Задача запланована на {scheduled_time.strftime('%H:%M')}")
-        else:
-            bot.send_message(message.chat.id, "🔁 Проміжок часу ще не підтримується, але буде 😉")
-    else:
-        bot.send_message(message.chat.id, "📝 Задача прийнята, але без часу")
-
-# ---- Запуск ----
-import threading
-
-def run_bot():
-    bot.infinity_polling()
-
-threading.Thread(target=run_bot).start()
+bot.polling()
