@@ -172,8 +172,3 @@ async def on_startup(_):
 
 if __name__ == "__main__":
     executor.start_polling(dp, on_startup=on_startup)
-
-if __name__ == "__main__":
-    # Запуск бота
-    executor.start_polling(dp, on_startup=on_startup)
-
