@@ -169,6 +169,7 @@ if __name__ == "__main__":
     asyncio.run(on_startup())
     bot.infinity_polling()
 
+
     logging.info(f"Бот запущено. Відновлено задач: {len(new_task_list)}")
 
 if __name__ == "__main__":
