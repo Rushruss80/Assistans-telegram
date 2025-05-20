@@ -5,26 +5,22 @@ import json
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
+from telebot.async_telebot import AsyncTeleBot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 # Налаштування логування
 logging.basicConfig(filename="bot.log", level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Ініціалізація бота та диспетчера з токеном
+# Ініціалізація бота
 TOKEN = os.environ.get("BOT_TOKEN", "")
 if not TOKEN:
     raise RuntimeError("Будь ласка, встановіть токен бота в змінну середовища BOT_TOKEN")
-bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+bot = AsyncTeleBot(TOKEN)
 
-# Файл для збереження задач (на локальній машині; на хостингах нестабільний)
 TASKS_FILE = "tasks.json"
-
-# Часова зона
 KYIV = ZoneInfo("Europe/Kyiv")
 
-# Завантаження існуючих задач з файлу (якщо файл не існує, починаємо з пустого списку)
+# Завантаження існуючих задач
 tasks_data = {"tasks": []}
 if os.path.exists(TASKS_FILE):
     try:
@@ -33,20 +29,18 @@ if os.path.exists(TASKS_FILE):
     except json.JSONDecodeError:
         tasks_data = {"tasks": []}
 
-# Допоміжна функція для збереження задач у файл
 def save_tasks():
     with open(TASKS_FILE, "w", encoding="utf-8") as f:
         json.dump(tasks_data, f, ensure_ascii=False, indent=4)
 
 pending_reminders = {}
-
-# Регулярні вирази
 time_pattern = re.compile(r"(\d{1,2}:\d{2})")
 relative_pattern = re.compile(r"через\s+(\d+)\s*(год|хв)", flags=re.IGNORECASE)
 
-@dp.message_handler(commands=["start", "help"])
-async def send_welcome(message: types.Message):
-    await message.reply(
+@bot.message_handler(commands=["start", "help"])
+async def send_welcome(message):
+    await bot.send_message(
+        message.chat.id,
         "Привіт! Я бот-нагадувач 🤖\n"
         "Надішліть мені повідомлення з задачею і часом, коли нагадати.\n"
         "Приклади:\n"
@@ -55,8 +49,8 @@ async def send_welcome(message: types.Message):
         "• `полити квіти через 2 години`"
     )
 
-@dp.message_handler(lambda msg: time_pattern.search(msg.text) or relative_pattern.search(msg.text))
-async def handle_reminder_request(message: types.Message):
+@bot.message_handler(func=lambda msg: time_pattern.search(msg.text) or relative_pattern.search(msg.text))
+async def handle_reminder_request(message):
     text = message.text.strip()
     user_id = message.from_user.id
     chat_id = message.chat.id
@@ -74,7 +68,7 @@ async def handle_reminder_request(message: types.Message):
         try:
             hour, minute = map(int, time_str.split(":"))
         except ValueError:
-            await message.reply("Не вдалося розпізнати час у форматі HH:MM.")
+            await bot.send_message(chat_id, "Не вдалося розпізнати час у форматі HH:MM.")
             return
         now = datetime.now(KYIV)
         event_time = datetime(now.year, now.month, now.day, hour, minute, tzinfo=KYIV)
@@ -98,21 +92,22 @@ async def handle_reminder_request(message: types.Message):
         desc = "подію"
 
     pending_reminders[user_id] = {"chat_id": chat_id, "text": desc, "time": event_time}
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("🔔 Тільки в зазначений час", callback_data="remind_once"))
-    keyboard.add(types.InlineKeyboardButton("⏰ За 10 хв, 5 хв і в час події", callback_data="remind_multiple"))
-    await message.reply(
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🔔 Тільки в зазначений час", callback_data="remind_once"))
+    keyboard.add(InlineKeyboardButton("⏰ За 10 хв, 5 хв і в час події", callback_data="remind_multiple"))
+    await bot.send_message(
+        chat_id,
         f"📝 Я зафіксував задачу: **{desc}** о {event_time.strftime('%H:%M')}. Коли нагадати про неї?",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
 
-@dp.callback_query_handler(lambda call: call.data in ("remind_once", "remind_multiple"))
-async def process_reminder_choice(call: types.CallbackQuery):
+@bot.callback_query_handler(func=lambda call: call.data in ("remind_once", "remind_multiple"))
+async def process_reminder_choice(call: CallbackQuery):
     user_id = call.from_user.id
     data = pending_reminders.pop(user_id, None)
     if not data:
-        await call.answer("❌ Немає активної задачі для нагадування.", show_alert=True)
+        await bot.answer_callback_query(call.id, "❌ Немає активної задачі для нагадування.", show_alert=True)
         return
 
     chat_id = data["chat_id"]
@@ -139,8 +134,8 @@ async def process_reminder_choice(call: types.CallbackQuery):
         asyncio.create_task(send_reminder(chat_id, text, remind_time))
 
     save_tasks()
-    await call.answer("✅ Нагадування налаштовано!", show_alert=False)
-    await call.message.edit_text("✅ Нагадування заплановано успішно.")
+    await bot.answer_callback_query(call.id, "✅ Нагадування налаштовано!", show_alert=False)
+    await bot.edit_message_text("✅ Нагадування заплановано успішно.", chat_id, call.message.message_id)
 
 async def send_reminder(chat_id: int, text: str, remind_time: datetime):
     delay = (remind_time - datetime.now(KYIV)).total_seconds()
@@ -155,7 +150,7 @@ async def send_reminder(chat_id: int, text: str, remind_time: datetime):
     )]
     save_tasks()
 
-async def on_startup(_):
+async def on_startup():
     now = datetime.now(KYIV)
     new_task_list = []
     for task in tasks_data.get("tasks", []):
@@ -168,6 +163,12 @@ async def on_startup(_):
             asyncio.create_task(send_reminder(task["chat_id"], task["text"], task_time))
     tasks_data["tasks"] = new_task_list
     save_tasks()
+    logging.info(f"Бот запущено. Відновлено задач: {len(new_task_list)}")
+
+if __name__ == "__main__":
+    asyncio.run(on_startup())
+    bot.infinity_polling()
+
     logging.info(f"Бот запущено. Відновлено задач: {len(new_task_list)}")
 
 if __name__ == "__main__":
